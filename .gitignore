@@ -1,0 +1,17 @@
+.DS_Store
+*.o
+*.gch
+*.pch
+*.out
+*.dSYM/
+*.dump
+*.dll
+
+# executables
+*.out
+*.exe
+
+# IDE
+*.idea/
+bin/
+build/
