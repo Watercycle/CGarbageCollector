@@ -1,12 +1,12 @@
 cmake_minimum_required(VERSION 3.3)
 project(C_GarbageCollected)
 
-set(COMPILER "-ansi")
+set(COMPILER "-std=c11")
 set(GCC_INCLUDE "-pedantic -g -Wall -Wextra -Winit-self -Wshadow -Wpointer-arith -Wcast-align -Winit-self")
 set(GCC_EXCLUDE "-Wno-unused-function -Wno-unused-parameter")
-set(GCC_OPTIMIZE "-O2 -g -pipe")
+set(GCC_OPTIMIZE "-O0 -g -pipe")
 
-set(CMAKE_C_FLAGS "${COMPILER} ${GCC_OPTIMIZE} ${GCC_EXCLUDE} ${GCC_INCLUDE}")
+set(CMAKE_C_FLAGS "${COMPILER} ${GCC_OPTIMIZE} ${GCC_EXCLUDE} ")
 
 set(SOURCE_FILES src/main.c)
 
