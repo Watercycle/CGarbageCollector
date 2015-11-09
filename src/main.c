@@ -8,7 +8,7 @@
 /* Variable Declarations, And Globals
 // ============================================================================ */
 
-typedef u_int32_t uint32;
+typedef unsigned long long uint64;
 
 typedef struct memory_info_t {
     size_t size;
@@ -17,7 +17,7 @@ typedef struct memory_info_t {
     bool is_active;
 } MemoryInfo;
 
-static uint32 stack_bottom = NULL;
+static unsigned long stack_bottom;
 static MemoryInfo* memory_list = NULL; /* tail */
 static MemoryInfo* memory_list_head = NULL; /* head */
 
@@ -26,8 +26,8 @@ static MemoryInfo* memory_list_head = NULL; /* head */
 // ============================================================================ */
 
 #define __FILENAME__ (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
-#define log(M, ...) fprintf(stderr, "[ASSERT] (%s: %d) " M "\n", __FILENAME__, __LINE__, ##__VA_ARGS__)
-#define check(A, M, ...) if(!(A)) { log(M, ##__VA_ARGS__); }
+#define log(type, M, ...) fprintf(stderr, "[" type "] (%s: %d) " M "\n", __FILENAME__, __LINE__, ##__VA_ARGS__)
+#define check(A, M, ...) if(!(A)) { log("ERROR", M, ##__VA_ARGS__); exit(1); }
 
 #define _foreach(item, list) for (__typeof__(list) item =  list; item != NULL; item = item->next)
 #define foreach(item_in_list) _foreach(item_in_list)
@@ -41,27 +41,36 @@ void die(const char* message)
     exit(EXIT_FAILURE);
 }
 
-/* ebp is the stack frame of the method, perfect for getting the top one. */
-#define get_top_of_stack(stack_top) __asm volatile ("movl %%ebp, %k0" : "=r" (stack_top))
+// ebp is the stack frame address of the method, perfect for getting the top one.
+// this might actually fail on some compilers, but is an easier approach.
+__attribute__((always_inline))
+static inline uintptr_t get_top_of_stack()
+{
+    const uintptr_t register stack_top __asm("ebp");
+    return stack_top;
+}
 
 /*
  * The bottom of the stack is stored in /proc/self/stat on most linux variants and cygwin.
  * This is not a very portable way of doing it, but for security reasons the stack is usually
- * randomized for security measures.
+ * randomized, making it difficult to get in a portable way.
  */
-uint32 get_bottom_of_stack()
+unsigned long get_bottom_of_stack()
 {
     FILE* proc_stats_file = fopen("/proc/self/stat", "r");
+    check(proc_stats_file != NULL, "failed to open stat file used for stack address");
 
     // see http://man7.org/linux/man-pages/man5/proc.5.html starting at /proc/[pid]/stat
-    unsigned long stack_bottom_address;
-    fscanf(proc_stats_file, "%*d %*s %*c %*d %*d %*d %*d %*d %*u "
-                            "%*lu %*lu %*lu %*lu %*lu %*lu %*ld %*ld "
-                            "%*ld %*ld %*ld %*ld %*llu %*lu %*ld "
-                            "%*lu %*lu %*lu %lu", &stack_bottom_address);
+    unsigned long stack_bottom_address = 0;
+    check(fscanf(proc_stats_file, "%*d %*s %*c %*d %*d %*d %*d %*d %*u "
+                                  "%*lu %*lu %*lu %*lu %*lu %*lu %*ld %*ld "
+                                  "%*ld %*ld %*ld %*ld %*llu %*lu %*ld "
+                                  "%*lu %*lu %*lu %lu", &stack_bottom_address) == 1,
+                                  "failed to read bottom stack address");
+    printf("%lu\n", stack_bottom_address);
 
     fclose(proc_stats_file);
-    return (uint32)stack_bottom_address;
+    return stack_bottom_address;
 }
 
 
@@ -97,7 +106,7 @@ MemoryInfo* find_free_block(size_t requested_size)
     /* no previously allocated memory available, allocate some */
     MemoryInfo* memory = sbrk(sizeof(MemoryInfo) + requested_size); /* extra space for meta data */
 
-    /* if the request didn't fail give it to the user! */
+    /* give user the memory on success */
     if (memory != (void*)-1)
     {
         memory->size = requested_size;
@@ -111,12 +120,9 @@ MemoryInfo* find_free_block(size_t requested_size)
     return NULL; /* no memory available what-so-ever! */
 }
 
-/*
- * No more need for a free method!
- */
+/* No more need for a free method! */
 void* gc_malloc(size_t size_in_bytes)
 {
-    if (stack_bottom == NULL) stack_bottom = get_bottom_of_stack(); /* first time */
     if (size_in_bytes <= 0) return NULL; /* silliness */
 
     /* get or allocate some memory from our linked list of memory */
@@ -140,11 +146,11 @@ size_t gc_memory_in_use()
 }
 
 /* Used to check the stack and heap for references to addresses being used by our heap */
-void mark_region(uint32 *start, uint32 *end)
+void mark_region(uint64 *start, uint64 *end)
 {
-    for (uint32 ref = *start; start < end; ref = start++) {
+    for (uint64 ref = *start; start < end; ref = *(start++)) {
         foreach (item in memory_list) {
-            if (ref >= (item + 1) and ref < (uint*)(item + 1) + item->size) {
+            if (ref >= (item + 1) and ref < (uint64 *)(item + 1) + item->size) {
                 item->is_active = true; /* our 'item' was referenced by stack/bss (ref) at '*ref'*/
             }
         }
@@ -153,13 +159,13 @@ void mark_region(uint32 *start, uint32 *end)
 
 /* Cross references each block's internal references against each allocated block in our "heap" */
 void mark_our_heap() {
-    /* look at each block used on the heap */
+    /* look at each block used on our heap */
     foreach (block in memory_list) {
         /* checking each internal reference of a block */
-        for (uint32* ref = (block + 1); ref < (uint32) (block + 1) + block->size; ref++) {
+        for (uint64 * ref = (block + 1); ref < (uint64 *)(block + 1) + block->size; ref++) {
             /* to see if any of them refer to another item on the heap */
             foreach (item in memory_list) {
-                if ((*ref >= (item + 1) and *ref < (uint32)(item + 1) + item->size)) {
+                if ((*ref >= (item + 1) and *ref < (uint64 *)(item + 1) + item->size)) {
                     item->is_active = true; /* our 'item' was referenced by 'block' at 'ref' */
                 }
             }
@@ -171,10 +177,9 @@ void mark_our_heap() {
 void mark_all()
 {
     extern char end, etext; /* provided by the linker. end = end of BSS segment. etext = end of text segment */
-    mark_region(&etext, &end); /* marks the BSS and initialized data segments */
+//    mark_region(&etext, &end); /* marks the BSS and initialized data segments */
 
-    uint32 stack_top; get_top_of_stack(stack_top);
-    mark_region(stack_top, stack_bottom);
+    mark_region(get_top_of_stack(), stack_bottom);
 
     mark_our_heap();
 }
@@ -187,7 +192,7 @@ void sweep()
             block->freed = true;
         }
 
-        // printf("block %u, active = %i, freed = %i, size = %i\n", block + 1, block->is_active, block->freed, block->size);
+        printf("block %u, active = %i, freed = %i, size = %i\n", block + 1, block->is_active, block->freed, block->size);
         block->is_active = false; /* reset marking for the next collection */
     }
 }
@@ -201,6 +206,19 @@ void gc_collect()
     sweep();
 }
 
+//__attribute__((constructor))
+void gc_init()
+{
+    stack_bottom = get_bottom_of_stack();
+//    printf("DON'T DELETE ME, LOVE STACK - %lu\n", stack_bottom, get_bottom_of_stack());
+}
+
+//__attribute__((destructor))
+//void gc_clean()
+//{
+//    gc_collect();
+//}
+
 /* Garbage Collector Testing
 // ============================================================================ */
 
@@ -210,7 +228,7 @@ void gc_test_reuse()
     int* a = gc_malloc(sizeof(char));
     gc_collect();
     int* b = gc_malloc(sizeof(char));
-    check(a != b, "overwrote memory still being used");
+    check(a != b, "overwrote memory that was still being used");
     printf("FINISHED REUSE TEST\n");
 }
 

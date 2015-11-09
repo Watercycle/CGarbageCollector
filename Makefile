@@ -13,7 +13,7 @@
 
 TARGET   = c-garbage-collector
 CC       = gcc
-CFLAGS   = -Wall -O0 -g -I.
+CFLAGS   = -std=gnu99 -Wall -O0 -g -I.
 LINKER   = gcc -o
 LFLAGS   = -Wall -I. -lm
 

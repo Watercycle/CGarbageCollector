@@ -10,7 +10,7 @@ General Procedure
 ====================
 1. Allocation tries to reuse memory, or asks the system for more.
 2. Extra meta data is squirreled away beneath the requested memory, and saved to a linked list.
-3. Occasionally the garbage collector will - collect.
+3. Occasionally the garbage collector will - well, collect.
   1. scan the heap (our linked list), the stack, and initialized variables
   2. mark pieces of memory in our heap that have been referenced in (a) as being 'actively used'
   3. make memory in the heap once again usable by marking it as "free" if it is not being 'actively used'
@@ -18,12 +18,12 @@ General Procedure
 Issues / Todo
 ====================
 - Variables are not being properly marked as 'active' from the stack scan
-- Does not support 64-bit
 - A few things could be made more portable
 - Silence warnings without cluttering the code with lots of casts
 
 Suggestions
 ====================
-- The malloc implementation is horrible.  Ideally you should request large chunks and manage them yourself
-- Scanning the heap for self-referencing objects is an O(n^3) operation, that's pretty bad
-- Many heaps scan automatically after so many allocations have occured
+- Focus on malloc first.  Ideally you should request large memory chunks and break them up yourself
+- Keeping separate lists for freed and unfreed blocks would help reduce search time
+- Scanning the heap for self-referencing objects is an O(n^3) operation, that's an issue!
+- Many heaps scan automatically collect after so many allocations have occured
