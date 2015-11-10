@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
+#include <sys/unistd.h>
 
 
 /* Variable Declarations, And Globals
@@ -20,6 +21,16 @@ static ptr stack_bottom;
 static MemoryInfo* memory_list = NULL; /* tail */
 static MemoryInfo* memory_list_head = NULL; /* head */
 
+/* Better C
+// ============================================================================ */
+
+#define _foreach(item, list) for (__typeof__(list) item =  list; item != NULL; item = item->next)
+#define foreach(item_in_list) _foreach(item_in_list)
+#define in ,
+#define and &&
+#define or ||
+#define unless(pred) if (!(pred))
+#define OUT_OF_MEMORY (void*)-1
 
 /* Utilities
 // ============================================================================ */
@@ -28,16 +39,6 @@ static MemoryInfo* memory_list_head = NULL; /* head */
 #define log(type, M, ...) fprintf(stderr, "[" type "] (%s: %d) " M "\n", __FILENAME__, __LINE__, ##__VA_ARGS__)
 #define check(A, M, ...) if(!(A)) { log("ERROR", M, ##__VA_ARGS__); exit(1); }
 
-#define _foreach(item, list) for (__typeof__(list) item =  list; item != NULL; item = item->next)
-#define foreach(item_in_list) _foreach(item_in_list)
-#define in ,
-#define and &&
-#define or ||
-#define unless(X) if (!X)
-#define OUT_OF_MEMORY (void*)-1
-
-// ebp is the stack frame address of the method, perfect for getting the top one.
-// this might actually fail on some compilers, but is an easier approach.
 ptr get_top_of_stack()
 {
     void* dummy;
@@ -63,7 +64,7 @@ MemoryInfo* request_memory(size_t requested_size)
         if (block->freed and block->size >= requested_size) return block;
     }
 
-    /* no previously allocated memory available, allocate some */
+    /* there was no previously allocated memory available, so we allocate some */
     MemoryInfo* memory = sbrk(sizeof(MemoryInfo) + requested_size); /* extra space for meta data */
     unless (memory == OUT_OF_MEMORY) {
         memory->size       = requested_size;
@@ -90,12 +91,13 @@ void* gc_malloc(size_t size_in_bytes)
 /* Garbage Collector Implementation
 // ============================================================================ */
 
+/* returns true if the address 'ref' is in 'item' */
 bool ref_points_to_item(void* ref, MemoryInfo* item)
 {
     return (*((ptr*)ref) >= (item + 1) and *((ptr*)ref) < (void*)(item + 1) + item->size);
 }
 
-/* reports all of the memory still marked as 'being used' */
+/* Reports all of the memory still marked as 'being used' */
 size_t gc_memory_in_use()
 {
     size_t sum = 0;
@@ -112,7 +114,7 @@ void mark_region(ptr start, ptr end)
     for (void* ref = start; ref < end; ref++) {
         foreach (item in memory_list) {
             if (ref_points_to_item(ref, item)) {
-                item->being_used = true; /* our 'item' (*ref) was referenced by the stack/bss at 'ref'*/
+                item->being_used = true; /* our 'item' (= *ref) was referenced by 'block' at 'ref' */
             }
         }
     }
@@ -123,8 +125,8 @@ void mark_our_heap() {
     foreach (block in memory_list) {
         for (void* ref = (block + 1); ref < (void*)(block + 1) + block->size; ref++) {
             foreach (item in memory_list) {
-                if (ref_points_to_item(ref, block)) {
-                    item->being_used = true; /* our 'item' (*ref) was referenced by 'block' at 'ref' */
+                if (ref_points_to_item(ref, item)) {
+                    item->being_used = true; /* our 'item' (= *ref) was referenced by 'block' at 'ref' */
                 }
             }
         }
@@ -151,7 +153,7 @@ void sweep()
     }
 }
 
-/* Applies a mark and sweep system where referenced objects will be marked as active/will not be freed. */
+/* Applies a 'mark and sweep' system where referenced objects marked as active will not be freed. */
 void gc_collect()
 {
     mark_all();
@@ -164,44 +166,6 @@ void gc_init()
     stack_bottom = get_top_of_stack() + 256; /* well before the main method */
 }
 
-/* Main
-// ============================================================================ */
-
-int main()
-{
-    gc_test_stack();
-    return EXIT_SUCCESS;
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 /* Garbage Collector Testing
 // ============================================================================ */
 
@@ -209,7 +173,7 @@ void gc_test_reuse()
 {
     printf("BEGINNING REUSE TEST\n");
     int* a = gc_malloc(sizeof(char));
-    gc_collect();
+    gc_collect(); /* should not delete a */
     int* b = gc_malloc(sizeof(char));
     check(a != b, "overwrote memory that was still being used");
     printf("FINISHED REUSE TEST\n");
@@ -217,8 +181,10 @@ void gc_test_reuse()
 
 void gc_test_stack_garbage()
 {
-    char* a = gc_malloc(1);
-    check(gc_memory_in_use() == 1, "GC failed allocation");
+    char* a = gc_malloc(1); /* garbage */
+
+    size_t mem = gc_memory_in_use();
+    check(mem == 1, "GC failed to initialize list memory, got %zu", mem);
     gc_collect();
     check(gc_memory_in_use() == 1, "GC failed to find a reference to 'a' [%llu] on the stack", &a);
 }
@@ -226,14 +192,12 @@ void gc_test_stack_garbage()
 void gc_test_stack()
 {
     printf("BEGINNING STACK TEST\n");
-    for (int i = 0; i < 1; i ++) {
-        {
-            check(gc_memory_in_use() == 0, "GC initialization error");
-            gc_test_stack_garbage();
-        }
-        gc_collect();
-        check(gc_memory_in_use() == 0, "GC failed to perform stack deallocation");
-    }
+    check(gc_memory_in_use() == 0, "GC initialization error");
+
+    gc_test_stack_garbage();
+    gc_collect();
+
+    check(gc_memory_in_use() == 1, "GC failed to perform stack deallocation");
     printf("FINISHED STACK TEST\n");
 }
 
@@ -254,42 +218,11 @@ void gc_test_heap()
     printf("FINISHED HEAP TEST\n");
 }
 
-void gc_test_hard()
+/* Main
+// ============================================================================ */
+
+int main()
 {
-    printf("BEGINNING HARD TEST\n");
-
-    typedef struct node_t { struct node_t* next; int val; } Node;
-    Node* a = gc_malloc(sizeof(Node));
-    a->val = 1;
-    a->next = NULL;
-
-    Node* b = gc_malloc(sizeof(Node));
-    b->val = 2;
-    b->next = a;
-
-    Node* c = gc_malloc(sizeof(Node));
-    c->val = 1;
-    c->next = b;
-
-    {
-        check(gc_memory_in_use() == sizeof(Node) * 3, "Nodes not properly allocated");
-        gc_collect();
-        check(gc_memory_in_use() == sizeof(Node) * 3, "size is off");
-        printf("leaked %u\n", gc_malloc(50));
-        check(gc_memory_in_use() == (sizeof(Node) * 3) + 50, "Additional allocation failed");
-    }
-
-    gc_collect();
-    check(gc_memory_in_use() == (sizeof(Node) * 3), "size is off");
-
-    a = NULL;
-    b = NULL;
-    c->next = NULL;
-    gc_collect();
-    check(gc_memory_in_use() == (sizeof(Node)), "Only one node should be accessible still");
-
-    c = NULL;
-    gc_collect();
-    check(gc_memory_in_use() == 0, "No nodes are accessible and should be deleted");
-    printf("FINISHED HARD TEST\n");
+    gc_test_stack();
+    return EXIT_SUCCESS;
 }
