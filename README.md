@@ -1,6 +1,7 @@
 CGarbageCollector
 ===================
 A simple, straightforward, __unoptimized__, garbage collector for C!
+***Is not functional at the moment, but the concept is still there***
 
 This collector is inspired by Matthew Plant's short paper, "Writing a Simple Garbage Collector in C".  It is intended to be a simplification of his original idea (with less pointer magic) in order to demystify garbage collectors for an even wider audience.
 
@@ -18,10 +19,9 @@ General Procedure
 Issues / Todo
 ====================
 - Variables are not being properly marked as 'active' from the stack scan
-- A few things could be made more portable
 - Silence warnings without cluttering the code with lots of casts
 
-Suggestions
+Suggestions For Improvements
 ====================
 - Focus on malloc first.  Ideally you should request large memory chunks and break them up yourself
 - Keeping separate lists for freed and unfreed blocks would help reduce search time
